@@ -54,12 +54,17 @@ export default function AdminPage() {
       }
 
       // If we've reached here, user is an admin.
-      await Promise.all([
+      // Set loading to false first to show the page structure
+      setLoading(false)
+      
+      // Then fetch data in parallel
+      Promise.all([
         fetchAllUsers(),
         fetchCategories(),
         fetchLocations()
-      ])
-      setLoading(false)
+      ]).catch(error => {
+        console.error('Error fetching admin data:', error)
+      })
     }
 
     fetchUserAndProfile()
@@ -79,22 +84,54 @@ export default function AdminPage() {
   }
 
   const fetchCategories = async () => {
-    const { data, error } = await supabase.functions.invoke('manage-categories?action=list')
+    try {
+      // Try direct database query first (faster)
+      const { data: directData, error: directError } = await supabase
+        .from('categories')
+        .select('*')
+        .order('name', { ascending: true })
 
-    if (error) {
+      if (!directError && directData) {
+        setCategories(directData)
+        return
+      }
+
+      // Fallback to Edge Function
+      const { data, error } = await supabase.functions.invoke('manage-categories?action=list')
+      if (error) {
+        toast.error('Failed to fetch categories.')
+      } else {
+        setCategories(data.data || [])
+      }
+    } catch (error) {
+      console.error('Error fetching categories:', error)
       toast.error('Failed to fetch categories.')
-    } else {
-      setCategories(data.data || [])
     }
   }
 
   const fetchLocations = async () => {
-    const { data, error } = await supabase.functions.invoke('manage-locations?action=list')
+    try {
+      // Try direct database query first (faster)
+      const { data: directData, error: directError } = await supabase
+        .from('locations')
+        .select('*')
+        .order('name', { ascending: true })
 
-    if (error) {
+      if (!directError && directData) {
+        setLocations(directData)
+        return
+      }
+
+      // Fallback to Edge Function
+      const { data, error } = await supabase.functions.invoke('manage-locations?action=list')
+      if (error) {
+        toast.error('Failed to fetch locations.')
+      } else {
+        setLocations(data.data || [])
+      }
+    } catch (error) {
+      console.error('Error fetching locations:', error)
       toast.error('Failed to fetch locations.')
-    } else {
-      setLocations(data.data || [])
     }
   }
 

@@ -494,10 +494,19 @@ export default function FinalTeamDashboard() {
     }
   }
   
-  const totalItems = filteredItems.length;
-  const inStockCount = filteredItems.filter(i => i.status === 'In Stock').length;
-  const lowStockCount = filteredItems.filter(i => i.status === 'Low Stock').length;
-  const outOfStockCount = filteredItems.filter(i => i.status === 'Out of Stock').length;
+  // Stats should be based on category and location filters, but not status filter
+  const baseFilteredItems = items.filter(item => {
+    const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesCategory = !filters.category || item.category === filters.category;
+    const matchesLocation = !filters.location || item.storage_location === filters.location;
+    // Don't include status filter for stats calculation
+    return matchesSearch && matchesCategory && matchesLocation;
+  });
+
+  const totalItems = baseFilteredItems.length;
+  const inStockCount = baseFilteredItems.filter(i => i.status === 'In Stock').length;
+  const lowStockCount = baseFilteredItems.filter(i => i.status === 'Low Stock').length;
+  const outOfStockCount = baseFilteredItems.filter(i => i.status === 'Out of Stock').length;
 
   if (loading) {
     return (
@@ -534,14 +543,13 @@ export default function FinalTeamDashboard() {
               
               {/* User actions */}
               <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
-                {/* Admin Panel - hidden on very small screens */}
+                {/* Admin Panel - responsive display */}
                 {userProfile?.role === 'admin' && (
                   <button 
                     onClick={() => router.push(getRouterPath('/admin'))} 
-                    className="hidden xs:inline-flex text-xs sm:text-sm font-semibold text-indigo-600 hover:text-indigo-800 px-2 py-1 rounded-md hover:bg-indigo-50"
+                    className="hidden sm:inline-flex text-xs sm:text-sm font-semibold text-indigo-600 hover:text-indigo-800 px-2 py-1 rounded-md hover:bg-indigo-50"
                   >
-                    <span className="sm:hidden">Admin</span>
-                    <span className="hidden sm:inline">Admin Panel</span>
+                    Admin Panel
                   </button>
                 )}
                 
@@ -585,11 +593,15 @@ export default function FinalTeamDashboard() {
           </div>
         </header>
 
-        <main className="mx-auto max-w-7xl py-6 px-4 sm:px-6 lg:px-8">
+        <main className="mx-auto max-w-7xl py-6 px-6 sm:px-6 lg:px-8">
           {/* Stats - Single Card */}
           <div className="bg-white p-4 sm:p-6 rounded-lg shadow-sm border border-gray-200 mb-8">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
-              <div className="flex items-center gap-2 lg:gap-3">
+              {/* Total Items - Clickable */}
+              <button 
+                onClick={() => setFilters({...filters, status: ''})}
+                className={`flex items-center gap-2 lg:gap-3 p-2 rounded-lg transition-colors hover:bg-gray-50 ${filters.status === '' ? 'ring-2 ring-blue-500 bg-blue-50' : ''}`}
+              >
                 <div className="w-8 h-8 lg:w-10 lg:h-10 bg-blue-500 rounded-lg flex items-center justify-center flex-shrink-0">
                   <svg className="w-4 h-4 lg:w-5 lg:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
@@ -599,8 +611,13 @@ export default function FinalTeamDashboard() {
                   <p className="text-xs lg:text-sm font-medium text-gray-600 truncate">Total Items</p>
                   <p className="text-lg lg:text-2xl font-bold text-blue-700">{totalItems}</p>
                 </div>
-                </div>
-              <div className="flex items-center gap-2 lg:gap-3">
+              </button>
+              
+              {/* In Stock - Clickable */}
+              <button 
+                onClick={() => setFilters({...filters, status: 'In Stock'})}
+                className={`flex items-center gap-2 lg:gap-3 p-2 rounded-lg transition-colors hover:bg-gray-50 ${filters.status === 'In Stock' ? 'ring-2 ring-green-500 bg-green-50' : ''}`}
+              >
                 <div className="w-8 h-8 lg:w-10 lg:h-10 bg-green-500 rounded-lg flex items-center justify-center flex-shrink-0">
                   <svg className="w-4 h-4 lg:w-5 lg:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
@@ -610,8 +627,13 @@ export default function FinalTeamDashboard() {
                   <p className="text-xs lg:text-sm font-medium text-gray-600 truncate">In Stock</p>
                   <p className="text-lg lg:text-2xl font-bold text-green-700">{inStockCount}</p>
                 </div>
-                </div>
-              <div className="flex items-center gap-2 lg:gap-3">
+              </button>
+              
+              {/* Low Stock - Clickable */}
+              <button 
+                onClick={() => setFilters({...filters, status: 'Low Stock'})}
+                className={`flex items-center gap-2 lg:gap-3 p-2 rounded-lg transition-colors hover:bg-gray-50 ${filters.status === 'Low Stock' ? 'ring-2 ring-yellow-500 bg-yellow-50' : ''}`}
+              >
                 <div className="w-8 h-8 lg:w-10 lg:h-10 bg-yellow-500 rounded-lg flex items-center justify-center flex-shrink-0">
                   <svg className="w-4 h-4 lg:w-5 lg:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.5 0L4.268 18.5c-.77.833.192 2.5 1.732 2.5z" />
@@ -621,8 +643,13 @@ export default function FinalTeamDashboard() {
                   <p className="text-xs lg:text-sm font-medium text-gray-600 truncate">Low Stock</p>
                   <p className="text-lg lg:text-2xl font-bold text-yellow-700">{lowStockCount}</p>
                 </div>
-                </div>
-              <div className="flex items-center gap-2 lg:gap-3">
+              </button>
+              
+              {/* Out of Stock - Clickable */}
+              <button 
+                onClick={() => setFilters({...filters, status: 'Out of Stock'})}
+                className={`flex items-center gap-2 lg:gap-3 p-2 rounded-lg transition-colors hover:bg-gray-50 ${filters.status === 'Out of Stock' ? 'ring-2 ring-red-500 bg-red-50' : ''}`}
+              >
                 <div className="w-8 h-8 lg:w-10 lg:h-10 bg-red-500 rounded-lg flex items-center justify-center flex-shrink-0">
                   <svg className="w-4 h-4 lg:w-5 lg:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -632,7 +659,7 @@ export default function FinalTeamDashboard() {
                   <p className="text-xs lg:text-sm font-medium text-gray-600 truncate">Out of Stock</p>
                   <p className="text-lg lg:text-2xl font-bold text-red-700">{outOfStockCount}</p>
                 </div>
-              </div>
+              </button>
             </div>
           </div>
 
@@ -1000,7 +1027,7 @@ export default function FinalTeamDashboard() {
             {/* Edit Item Form - will be removed from here */}
 
             {/* Responsive Card Layout */}
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mt-6">
               {filteredItems.map((item) => (
                 <div key={item.id} className="bg-white shadow rounded-lg p-4 flex flex-col">
                   <div className="flex justify-between items-start gap-4">
