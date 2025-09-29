@@ -1,12 +1,8 @@
 'use client'
 
-import { useEffect } from 'react'
-import { redirect } from 'next/navigation'
+import FinalTeamDashboard from './team-dashboard/page'
 
 export default function Home() {
-  useEffect(() => {
-    redirect('/team-dashboard')
-  }, [])
-
-  return null
+  return <FinalTeamDashboard />
 }
+
