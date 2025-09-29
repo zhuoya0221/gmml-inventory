@@ -13,20 +13,30 @@ export default function LoginPage() {
   const handleGoogleLogin = async () => {
     try {
       setLoading(true)
-      const { error } = await supabase.auth.signInWithOAuth({
+      
+      console.log('🚀 Starting OAuth login...')
+      console.log('🌍 Window origin:', window.location.origin)
+      console.log('🔗 Redirect URL:', `${window.location.origin}/auth/callback`)
+      
+      const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
           redirectTo: `${window.location.origin}/auth/callback`
         }
       })
       
+      console.log('📤 OAuth response:', { data, error })
+      
       if (error) {
-        toast.error('Error logging in with Google')
-        console.error('Error:', error)
+        console.error('OAuth Error:', error)
+        toast.error(`Error logging in with Google: ${error.message}`)
+      } else if (data?.url) {
+        console.log('🔗 OAuth URL generated:', data.url)
+        // The browser should redirect automatically
       }
     } catch (error) {
+      console.error('Error during login:', error)
       toast.error('An unexpected error occurred')
-      console.error('Error:', error)
     } finally {
       setLoading(false)
     }
@@ -48,6 +58,7 @@ export default function LoginPage() {
         </div>
 
         <div className="mt-8 space-y-6">
+          {/* Main Google OAuth button */}
           <button
             onClick={handleGoogleLogin}
             disabled={loading}
@@ -61,6 +72,14 @@ export default function LoginPage() {
                 Sign in with Google
               </>
             )}
+          </button>
+
+          {/* Direct dashboard access for testing - remove this in production */}
+          <button
+            onClick={() => router.push('/dashboard')}
+            className="w-full py-2 px-4 bg-gray-600 text-white rounded text-sm hover:bg-gray-700 transition-colors"
+          >
+            Demo Mode (Skip Authentication)
           </button>
 
           <div className="text-center">

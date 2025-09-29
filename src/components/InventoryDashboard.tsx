@@ -25,6 +25,7 @@ import Header from './Header'
 import StatsCards from './StatsCards'
 
 export default function InventoryDashboard() {
+  console.log('📊 InventoryDashboard component loaded!')
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState<InventoryItem[]>([])
@@ -59,17 +60,21 @@ export default function InventoryDashboard() {
   }, [items, searchTerm, categoryFilter, locationFilter, statusFilter])
 
   const checkUser = async () => {
+    console.log('🔍 Checking user authentication...')
     try {
       const { data: { user } } = await supabase.auth.getUser()
+      console.log('👤 User data:', user)
       
       if (!user) {
+        console.log('❌ No user found, redirecting to login...')
         router.push('/login')
         return
       }
       
+      console.log('✅ User authenticated:', user.email)
       setUser(user)
     } catch (error) {
-      console.error('Error checking user:', error)
+      console.error('💥 Error checking user:', error)
       router.push('/login')
     } finally {
       setLoading(false)
