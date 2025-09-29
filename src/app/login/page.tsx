@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { toast } from 'react-hot-toast'
@@ -10,23 +10,58 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const router = useRouter()
 
+  useEffect(() => {
+    const handleAuthRedirect = async () => {
+      if (typeof window === 'undefined') return
+
+      const currentUrl = new URL(window.location.href)
+      const authCode = currentUrl.searchParams.get('code')
+      const errorDescription = currentUrl.searchParams.get('error_description')
+
+      if (errorDescription) {
+        toast.error(decodeURIComponent(errorDescription))
+        window.history.replaceState({}, document.title, window.location.pathname)
+        return
+      }
+
+      if (!authCode) return
+
+      try {
+        setLoading(true)
+        const { error } = await supabase.auth.exchangeCodeForSession(window.location.href)
+
+        if (error) {
+          toast.error(`Authentication failed: ${error.message}`)
+          return
+        }
+
+        window.history.replaceState({}, document.title, window.location.pathname)
+        toast.success('Login successful!')
+        router.push('/team-dashboard')
+      } catch (error) {
+        console.error('Error completing OAuth flow:', error)
+        toast.error('Unable to complete Google login. Please try again.')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    handleAuthRedirect()
+  }, [router])
+
   const handleGoogleLogin = async () => {
     try {
       setLoading(true)
-      
-      console.log('🚀 Starting OAuth login...')
-      console.log('🌍 Window origin:', window.location.origin)
-      console.log('🔗 Redirect URL:', `${window.location.origin}/auth/callback`)
-      
+
+      const redirectTo = `${window.location.origin}${window.location.pathname}`
+
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`
+          redirectTo
         }
       })
-      
-      console.log('📤 OAuth response:', { data, error })
-      
+
       if (error) {
         console.error('OAuth Error:', error)
         toast.error(`Error logging in with Google: ${error.message}`)
