@@ -1,6 +1,7 @@
 'use client'
 
 import { Edit, Trash2, Image as ImageIcon } from 'lucide-react'
+import Image from 'next/image'
 import { type InventoryItem } from '@/lib/supabase'
 import { format } from 'date-fns'
 
@@ -75,10 +76,12 @@ export default function InventoryTable({ items, onEdit, onDelete }: InventoryTab
                 <td className="px-6 py-4 whitespace-nowrap">
                   <div className="flex items-center">
                     {item.photo_url ? (
-                      <img
+                      <Image
                         className="h-10 w-10 rounded-lg object-cover"
                         src={item.photo_url}
                         alt={item.name}
+                        width={40}
+                        height={40}
                       />
                     ) : (
                       <div className="h-10 w-10 rounded-lg bg-gray-200 flex items-center justify-center">

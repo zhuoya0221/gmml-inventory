@@ -1,30 +1,21 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+
 import { supabase } from '@/lib/supabase'
 import toast, { Toaster } from 'react-hot-toast'
-
-interface InventoryItem {
-  id: string
-  name: string
-  category: string
-  current_stock: number
-  min_stock: number
-  status: string
-  storage_location: string
-  date_updated: string
-  created_by: string
-  updated_by?: string
-  unit?: string
-  expire_date?: string
-}
+import type { InventoryItem, UserProfile, ActivityLog } from '@/lib/supabase'
+import type { User } from '@supabase/supabase-js'
 
 export default function FinalTeamDashboard() {
+  const router = useRouter()
   const [items, setItems] = useState<InventoryItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [user, setUser] = useState<any>(null)
-  const [activityLogs, setActivityLogs] = useState<any[]>([])
-  const [showLogs, setShowLogs] = useState(false)
+  const [user, setUser] = useState<User | null>(null)
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
+  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([])
   const [showAddForm, setShowAddForm] = useState(false)
   const [newItem, setNewItem] = useState({
     name: '',
@@ -82,6 +73,27 @@ export default function FinalTeamDashboard() {
       const { data: { user } } = await supabase.auth.getUser()
       setUser(user)
 
+      if (!user) {
+        // If no user, clear data and show the login button
+        setUserProfile(null)
+        setItems([])
+        setFilteredItems([])
+        setLoading(false)
+        return
+      }
+
+      // Fetch user profile to check role
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+
+      if (profileError) {
+        throw new Error("Could not fetch user profile.");
+      }
+      setUserProfile(profile);
+
       const { data: inventoryItems, error } = await supabase
         .from('inventory_items')
         .select('*')
@@ -103,8 +115,9 @@ export default function FinalTeamDashboard() {
       if (!logsError) {
         setActivityLogs(logs || [])
       }
-    } catch (error: any) {
-      toast.error(`Error fetching data: ${error.message}`)
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred."
+      toast.error(`Error fetching data: ${errorMessage}`)
       console.error("Data fetch error:", error)
     } finally {
       setLoading(false)
@@ -134,9 +147,7 @@ export default function FinalTeamDashboard() {
       expire_date: newItem.expire_date || null,
       status: newItem.current_stock > newItem.min_stock ? 'In Stock' : (newItem.current_stock === 0 ? 'Out of Stock' : 'Low Stock'),
       created_by: user.email,
-      updated_by: user.email,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      updated_by: user.email
     }
 
     console.log('🔍 Adding item:', itemData)
@@ -222,6 +233,31 @@ export default function FinalTeamDashboard() {
     }
   }
 
+  const handleDeleteItem = async (itemId: string, itemName: string) => {
+    if (!confirm(`Are you sure you want to delete "${itemName}"?`)) return;
+
+    if (!user || !user.id) {
+      toast.error("Please login to delete items");
+      return;
+    }
+
+    const { error } = await supabase
+      .from('inventory_items')
+      .delete()
+      .eq('id', itemId);
+
+    if (error) {
+      toast.error(`Error deleting item: ${error.message}`);
+    } else {
+      const updatedItems = items.filter(i => i.id !== itemId);
+      setItems(updatedItems);
+      toast.success(`"${itemName}" has been deleted.`);
+      
+      // Log the activity
+      await logActivity(itemId, itemName, 'deleted', { id: itemId, name: itemName });
+    }
+  };
+
 
   const handleLogin = async () => {
     const { error } = await supabase.auth.signInWithOAuth({
@@ -235,10 +271,10 @@ export default function FinalTeamDashboard() {
     await supabase.auth.signOut()
     setUser(null)
     toast.success("Logged out.")
-    window.location.reload()
+    window.location.href = '/';
   }
 
-  const logActivity = async (itemId: string, itemName: string, action: string, changes: any) => {
+  const logActivity = async (itemId: string, itemName: string, action: string, changes: Record<string, unknown>) => {
     if (!user || !user.id) return
 
     try {
@@ -284,12 +320,21 @@ export default function FinalTeamDashboard() {
       'Status': item.status,
       'Location': item.storage_location,
       'Updated': new Date(item.updated_at).toLocaleDateString()
-    }))
-
-    const headers = Object.keys(csvData[0] || {})
+    }));
+  
+    if (csvData.length === 0) {
+      toast.error("No data to export.");
+      return;
+    }
+  
+    const headers = Object.keys(csvData[0])
     const csvContent = [
       headers.join(','),
-      ...csvData.map(row => headers.map(header => `"${row[header]}"`).join(','))
+      ...csvData.map(row => 
+        headers.map(header => 
+          `"${String(row[header as keyof typeof row]).replace(/"/g, '""')}"`
+        ).join(',')
+      )
     ].join('\n')
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
@@ -343,6 +388,14 @@ export default function FinalTeamDashboard() {
                 </div>
               </div>
               <div className="flex items-center gap-4">
+                {userProfile?.role === 'admin' && (
+                  <button 
+                    onClick={() => router.push('/admin')} 
+                    className="text-sm font-semibold text-indigo-600 hover:text-indigo-800"
+                  >
+                    Admin Panel
+                  </button>
+                )}
                 <span className="text-sm text-gray-600">{user?.email || "Team Mode"}</span>
                 {user && user.id ? (
                   <button onClick={handleLogout} className="text-sm font-semibold text-red-600 hover:text-red-800">Logout</button>
@@ -447,7 +500,7 @@ export default function FinalTeamDashboard() {
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
                       placeholder="Search items..."
-                      className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                      className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                     />
                   </div>
                 </div>
@@ -533,7 +586,7 @@ export default function FinalTeamDashboard() {
                     onClick={() => setShowAddForm(!showAddForm)}
                     disabled={!user || !user.id}
                     className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 ${
-                      !user || !user.id 
+                      !user || !user.id || userProfile?.role === 'user'
                         ? 'bg-gray-400 cursor-not-allowed' 
                         : 'bg-indigo-600 hover:bg-indigo-700'
                     }`}
@@ -551,8 +604,8 @@ export default function FinalTeamDashboard() {
             {showAddForm && (
               <div className="mt-6 bg-white shadow rounded-lg p-6">
                 <h3 className="text-lg font-medium text-gray-900 mb-4">Add New Item</h3>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-7">
-                  <div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+                  <div className="md:col-span-2">
                     <label htmlFor="item-name" className="block text-sm font-medium text-gray-700">
                       Item Name *
                     </label>
@@ -580,6 +633,22 @@ export default function FinalTeamDashboard() {
                             <option value="Studying Consumables">Studying Consumables</option>
                             <option value="Stationery">Stationery</option>
                             <option value="Others">Others</option>
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label htmlFor="storage-location" className="block text-sm font-medium text-gray-700">
+                      Storage Location *
+                    </label>
+                    <select
+                      id="storage-location"
+                      value={newItem.storage_location}
+                      onChange={(e) => setNewItem({...newItem, storage_location: e.target.value})}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
+                    >
+                      <option value="">Select location</option>
+                      <option value="GTR">GTR</option>
+                      <option value="MD6 LEVEL9">MD6 LEVEL9</option>
                     </select>
                   </div>
 
@@ -612,22 +681,6 @@ export default function FinalTeamDashboard() {
                   </div>
 
                   <div>
-                    <label htmlFor="storage-location" className="block text-sm font-medium text-gray-700">
-                      Storage Location *
-                    </label>
-                    <select
-                      id="storage-location"
-                      value={newItem.storage_location}
-                      onChange={(e) => setNewItem({...newItem, storage_location: e.target.value})}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
-                    >
-                      <option value="">Select location</option>
-                      <option value="GTR">GTR</option>
-                      <option value="MD6 LEVEL9">MD6 LEVEL9</option>
-                    </select>
-                  </div>
-
-                  <div>
                     <label htmlFor="item-unit" className="block text-sm font-medium text-gray-700">
                       Unit
                     </label>
@@ -655,7 +708,7 @@ export default function FinalTeamDashboard() {
                   </div>
                 </div>
 
-                <div className="mt-4 flex justify-end space-x-3">
+                <div className="mt-6 flex justify-end space-x-3">
                   <button
                     type="button"
                     onClick={() => {
@@ -677,12 +730,69 @@ export default function FinalTeamDashboard() {
               </div>
             )}
 
-            {/* Edit Item Form */}
-            {showEditForm && editingItem && (
-              <div className="mt-6 bg-white shadow rounded-lg p-6">
-                <h3 className="text-lg font-medium text-gray-900 mb-4">Edit Item</h3>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-7">
-                  <div>
+            {/* Edit Item Form - will be removed from here */}
+
+            {/* Responsive Card Layout */}
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+              {filteredItems.map((item) => (
+                <div key={item.id} className="bg-white shadow rounded-lg p-4 flex flex-col">
+                  <div className="flex justify-between items-start gap-4">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-lg font-semibold text-gray-900 truncate" title={item.name}>
+                        {item.name}
+                      </p>
+                      <p className="text-sm text-gray-500 truncate">{item.category}</p>
+                    </div>
+                    <div className="flex-shrink-0">
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(item.status)}`}>
+                        {item.status}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-4 space-y-2 text-sm text-gray-700 flex-grow">
+                    <p><span className="font-medium">Stock:</span> {item.current_stock} / {item.min_stock} {item.unit || ''}</p>
+                    <p><span className="font-medium">Location:</span> {item.storage_location}</p>
+                    <div className="grid grid-cols-2 gap-x-4">
+                      <p><span className="font-medium">Expire Date:</span> {item.expire_date ? new Date(item.expire_date).toLocaleDateString() : '-'}</p>
+                      <p><span className="font-medium">Updated:</span> {new Date(item.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 pt-4 border-t border-gray-200 flex justify-end space-x-2">
+                    {userProfile?.role !== 'user' && (
+                      <>
+                        <button 
+                          onClick={() => handleEditItem(item)} 
+                          disabled={!user || !user.id}
+                          className={`inline-flex items-center p-1.5 rounded-md ${!user || !user.id ? 'text-gray-400 cursor-not-allowed' : 'text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50'}`}
+                          title="Edit"
+                        >
+                          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteItem(item.id, item.name)} 
+                          disabled={!user || !user.id}
+                          className={`inline-flex items-center p-1.5 rounded-md ${!user || !user.id ? 'text-gray-400 cursor-not-allowed' : 'text-red-600 hover:text-red-900 hover:bg-red-50'}`}
+                          title="Delete"
+                        >
+                          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Edit Item Modal */}
+          {showEditForm && editingItem && (
+            <div className="fixed inset-0 bg-gray-600 bg-opacity-50 z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-3xl">
+                <h3 className="text-2xl font-semibold text-gray-900 mb-6">Edit Item</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+                  <div className="md:col-span-2">
                     <label htmlFor="edit-item-name" className="block text-sm font-medium text-gray-700">
                       Item Name *
                     </label>
@@ -710,6 +820,22 @@ export default function FinalTeamDashboard() {
                             <option value="Studying Consumables">Studying Consumables</option>
                             <option value="Stationery">Stationery</option>
                             <option value="Others">Others</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label htmlFor="edit-storage-location" className="block text-sm font-medium text-gray-700">
+                      Storage Location *
+                    </label>
+                    <select
+                      id="edit-storage-location"
+                      value={editingItem.storage_location}
+                      onChange={(e) => setEditingItem({...editingItem, storage_location: e.target.value})}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
+                    >
+                      <option value="">Select location</option>
+                      <option value="GTR">GTR</option>
+                      <option value="MD6 LEVEL9">MD6 LEVEL9</option>
                     </select>
                   </div>
 
@@ -742,22 +868,6 @@ export default function FinalTeamDashboard() {
                   </div>
 
                   <div>
-                    <label htmlFor="edit-storage-location" className="block text-sm font-medium text-gray-700">
-                      Storage Location *
-                    </label>
-                    <select
-                      id="edit-storage-location"
-                      value={editingItem.storage_location}
-                      onChange={(e) => setEditingItem({...editingItem, storage_location: e.target.value})}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
-                    >
-                      <option value="">Select location</option>
-                      <option value="GTR">GTR</option>
-                      <option value="MD6 LEVEL9">MD6 LEVEL9</option>
-                    </select>
-                  </div>
-
-                  <div>
                     <label htmlFor="edit-item-unit" className="block text-sm font-medium text-gray-700">
                       Unit
                     </label>
@@ -778,14 +888,14 @@ export default function FinalTeamDashboard() {
                     <input
                       type="date"
                       id="edit-item-expire-date"
-                      value={editingItem.expire_date || ''}
+                      value={editingItem.expire_date ? editingItem.expire_date.split('T')[0] : ''}
                       onChange={(e) => setEditingItem({...editingItem, expire_date: e.target.value})}
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
                     />
                   </div>
                 </div>
 
-                <div className="mt-4 flex justify-end space-x-3">
+                <div className="mt-8 flex justify-end space-x-3">
                   <button
                     type="button"
                     onClick={() => {
@@ -805,87 +915,9 @@ export default function FinalTeamDashboard() {
                   </button>
                 </div>
               </div>
-            )}
 
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">ITEM</th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">CATEGORY</th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">STOCK</th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">UNIT</th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">STATUS</th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">LOCATION</th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">EXPIRE DATE</th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">UPDATED</th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">ACTIONS</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredItems.map((item) => (
-                    <tr key={item.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <div className="flex-shrink-0 h-10 w-10">
-                            <div className="h-10 w-10 rounded-lg bg-gray-200 flex items-center justify-center">
-                              <svg className="h-6 w-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                              </svg>
-                            </div>
-                          </div>
-                          <div className="ml-4">
-                            <div className="text-sm font-medium text-gray-900">{item.name}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.category}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {item.current_stock} / {item.min_stock} min
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {item.unit || '-'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(item.status)}`}>
-                          {item.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.storage_location}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {item.expire_date ? new Date(item.expire_date).toLocaleDateString() : '-'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {new Date(item.updated_at).toLocaleDateString('en-US', { 
-                          month: 'short', 
-                          day: 'numeric', 
-                          year: 'numeric' 
-                        })}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <div className="flex items-center space-x-2">
-                          <button 
-                            onClick={() => handleEditItem(item)} 
-                            disabled={!user || !user.id}
-                            className={`inline-flex items-center p-1.5 rounded-md ${
-                              !user || !user.id 
-                                ? 'text-gray-400 cursor-not-allowed' 
-                                : 'text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50'
-                            }`}
-                            title="Edit"
-                          >
-                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                            </svg>
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
             </div>
-          </div>
+          )}
 
           {/* Activity Log Modal */}
           {showActivityModal && (
@@ -920,7 +952,7 @@ export default function FinalTeamDashboard() {
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-gray-900">
-                              {log.user_email} {log.action} "{log.item_name}"
+                              {log.user_email} {log.action} &quot;{log.item_name}&quot;
                             </p>
                             <p className="text-xs text-gray-900">
                               {new Date(log.timestamp).toLocaleString()}

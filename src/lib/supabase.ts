@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, PostgrestError } from '@supabase/supabase-js'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -11,6 +11,9 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   }
 })
 
+// Re-export PostgrestError for convenience
+export type { PostgrestError };
+
 // Database Types
 export interface InventoryItem {
   id: string
@@ -19,6 +22,8 @@ export interface InventoryItem {
   category: string
   current_stock: number
   min_stock: number
+  unit: string
+  expire_date?: string
   status: 'In Stock' | 'Low Stock' | 'Out of Stock'
   date_updated: string
   storage_location: string
@@ -34,7 +39,7 @@ export interface ActivityLog {
   user_id: string
   user_email: string
   action: 'created' | 'updated' | 'deleted'
-  changes: Record<string, any>
+  changes: Record<string, unknown>
   timestamp: string
   item_name: string
 }
@@ -45,4 +50,5 @@ export interface UserProfile {
   full_name?: string
   avatar_url?: string
   created_at: string
+  role: string
 }

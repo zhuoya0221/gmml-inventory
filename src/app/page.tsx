@@ -1,8 +1,6 @@
-'use client'
-
-import FinalTeamDashboard from './team-dashboard/page'
+import { redirect } from 'next/navigation'
 
 export default function Home() {
-  return <FinalTeamDashboard />
+  redirect('/team-dashboard')
 }
 

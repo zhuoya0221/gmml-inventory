@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase, type InventoryItem, type ActivityLog } from '@/lib/supabase'
 import { toast } from 'react-hot-toast'
@@ -10,10 +10,6 @@ import {
   Search, 
   Filter, 
   Download, 
-  Upload, 
-  LogOut, 
-  User,
-  BarChart3,
   History,
   Loader2 
 } from 'lucide-react'
@@ -23,10 +19,11 @@ import EditItemModal from './EditItemModal'
 import ActivityLogModal from './ActivityLogModal'
 import Header from './Header'
 import StatsCards from './StatsCards'
+import type { User } from '@supabase/supabase-js'
 
 export default function InventoryDashboard() {
   console.log('📊 InventoryDashboard component loaded!')
-  const [user, setUser] = useState<any>(null)
+  const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState<InventoryItem[]>([])
   const [filteredItems, setFilteredItems] = useState<InventoryItem[]>([])
@@ -44,22 +41,7 @@ export default function InventoryDashboard() {
   
   const router = useRouter()
 
-  useEffect(() => {
-    checkUser()
-  }, [])
-
-  useEffect(() => {
-    if (user) {
-      fetchItems()
-      fetchActivityLogs()
-    }
-  }, [user])
-
-  useEffect(() => {
-    filterItems()
-  }, [items, searchTerm, categoryFilter, locationFilter, statusFilter])
-
-  const checkUser = async () => {
+  const checkUser = useCallback(async () => {
     console.log('🔍 Checking user authentication...')
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -79,7 +61,46 @@ export default function InventoryDashboard() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [router])
+
+  useEffect(() => {
+    checkUser()
+  }, [checkUser])
+
+  useEffect(() => {
+    if (user) {
+      fetchItems()
+      fetchActivityLogs()
+    }
+  }, [user])
+
+  const filterItems = useCallback(() => {
+    let filtered = items
+
+    if (searchTerm) {
+      filtered = filtered.filter(item =>
+        item.name.toLowerCase().includes(searchTerm.toLowerCase())
+      )
+    }
+
+    if (categoryFilter) {
+      filtered = filtered.filter(item => item.category === categoryFilter)
+    }
+
+    if (locationFilter) {
+      filtered = filtered.filter(item => item.storage_location === locationFilter)
+    }
+
+    if (statusFilter) {
+      filtered = filtered.filter(item => item.status === statusFilter)
+    }
+
+    setFilteredItems(filtered)
+  }, [items, searchTerm, categoryFilter, locationFilter, statusFilter]);
+
+  useEffect(() => {
+    filterItems()
+  }, [filterItems])
 
   const fetchItems = async () => {
     try {
@@ -116,30 +137,6 @@ export default function InventoryDashboard() {
     } catch (error) {
       console.error('Error fetching activity logs:', error)
     }
-  }
-
-  const filterItems = () => {
-    let filtered = items
-
-    if (searchTerm) {
-      filtered = filtered.filter(item =>
-        item.name.toLowerCase().includes(searchTerm.toLowerCase())
-      )
-    }
-
-    if (categoryFilter) {
-      filtered = filtered.filter(item => item.category === categoryFilter)
-    }
-
-    if (locationFilter) {
-      filtered = filtered.filter(item => item.storage_location === locationFilter)
-    }
-
-    if (statusFilter) {
-      filtered = filtered.filter(item => item.status === statusFilter)
-    }
-
-    setFilteredItems(filtered)
   }
 
   const handleSignOut = async () => {
@@ -225,7 +222,7 @@ export default function InventoryDashboard() {
                 <Package className="h-8 w-8 text-indigo-600" />
                 GMML Inventory
               </h1>
-              <p className="text-gray-600 mt-1">Manage your team's inventory and track changes</p>
+              <p className="text-gray-600 mt-1">Manage your team&apos;s inventory and track changes</p>
             </div>
             <div className="flex items-center gap-4">
               <button
