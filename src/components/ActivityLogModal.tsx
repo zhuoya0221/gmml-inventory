@@ -1,14 +1,16 @@
 'use client'
 
-import { type ActivityLog } from '@/lib/supabase'
+import { type ActivityLog, type UserProfile } from '@/lib/supabase'
 import { formatDistanceToNow } from 'date-fns'
 
 interface ActivityLogModalProps {
   logs: ActivityLog[]
+  userProfile: UserProfile | null
   onClose: () => void
+  onDeleteLog?: (logId: string) => Promise<void>
 }
 
-export default function ActivityLogModal({ logs, onClose }: ActivityLogModalProps) {
+export default function ActivityLogModal({ logs, userProfile, onClose, onDeleteLog }: ActivityLogModalProps) {
   const getActionColor = (action: string) => {
     switch (action) {
       case 'created': return 'bg-green-100 text-green-800'
@@ -19,10 +21,55 @@ export default function ActivityLogModal({ logs, onClose }: ActivityLogModalProp
   }
 
   const formatChanges = (changes: Record<string, unknown>) => {
+    // Format key names to be more readable
+    const formatKey = (key: string) => {
+      const keyMap: Record<string, string> = {
+        'current_stock': 'Current Stock',
+        'min_stock': 'Min Stock',
+        'storage_location': 'Storage Location',
+        'expire_date': 'Expire Date',
+        'photo_url': 'Photo URL',
+        'created_at': 'Created At',
+        'updated_at': 'Updated At',
+        'created_by': 'Created By',
+        'updated_by': 'Updated By'
+      }
+      return keyMap[key] || key.charAt(0).toUpperCase() + key.slice(1)
+    }
+
+    // Format values to be more readable
+    const formatValue = (value: unknown) => {
+      if (value === null || value === undefined) return 'N/A'
+      if (typeof value === 'string' && value.includes('T') && value.includes('Z')) {
+        // Format timestamps
+        try {
+          return new Date(value).toLocaleString()
+        } catch {
+          return value
+        }
+      }
+      return String(value)
+    }
+
     return Object.entries(changes)
-      .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
+      .filter(([key]) => !['id'].includes(key)) // Hide ID field as it's not user-friendly
+      .map(([key, value]) => `${formatKey(key)}: ${formatValue(value)}`)
       .join(', ')
   }
+
+  const handleDeleteLog = async (logId: string) => {
+    if (!onDeleteLog) return
+    
+    if (confirm('Are you sure you want to delete this activity log entry? This action cannot be undone.')) {
+      try {
+        await onDeleteLog(logId)
+      } catch (error) {
+        console.error('Failed to delete log:', error)
+      }
+    }
+  }
+
+  const isAdmin = userProfile?.role === 'admin'
 
   return (
     <div className="fixed inset-0 bg-gray-600 bg-opacity-75 z-50 flex items-center justify-center p-4">
@@ -59,6 +106,19 @@ export default function ActivityLogModal({ logs, onClose }: ActivityLogModalProp
                         </p>
                       )}
                     </div>
+                    {isAdmin && onDeleteLog && (
+                      <div className="flex-shrink-0">
+                        <button
+                          onClick={() => handleDeleteLog(log.id)}
+                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors duration-200"
+                          title="Delete this log entry (Admin only)"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </li>
               ))}

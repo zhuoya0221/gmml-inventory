@@ -49,27 +49,26 @@ export default function StatsCards({ items }: StatsCardsProps) {
   ]
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-      {stats.map((stat) => {
-        const Icon = stat.icon
-        return (
-          <div key={stat.name} className={`${stat.bgColor} p-6 rounded-lg border`}>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className={`text-sm font-medium ${stat.textColor}`}>
-                  {stat.name}
-                </p>
-                <p className={`text-3xl font-bold ${stat.textColor}`}>
-                  {stat.value}
-                </p>
+    <div className="bg-white p-4 sm:p-6 rounded-lg shadow mb-6">
+      <h2 className="text-lg font-semibold text-gray-900 mb-4">Inventory Overview</h2>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {stats.map((stat) => {
+          const Icon = stat.icon
+          return (
+            <div key={stat.name} className="text-center">
+              <div className={`${stat.color} p-3 rounded-lg mx-auto mb-2 w-fit`}>
+                <Icon className="h-5 w-5 text-white" />
               </div>
-              <div className={`${stat.color} p-3 rounded-lg`}>
-                <Icon className="h-6 w-6 text-white" />
-              </div>
+              <p className="text-sm font-medium text-gray-600 mb-1">
+                {stat.name}
+              </p>
+              <p className={`text-2xl font-bold ${stat.textColor}`}>
+                {stat.value}
+              </p>
             </div>
-          </div>
-        )
-      })}
+          )
+        })}
+      </div>
     </div>
   )
 }

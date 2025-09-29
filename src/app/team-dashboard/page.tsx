@@ -1,21 +1,26 @@
 'use client'
 
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 
 import { supabase } from '@/lib/supabase'
 import toast, { Toaster } from 'react-hot-toast'
-import type { InventoryItem, UserProfile, ActivityLog } from '@/lib/supabase'
+import type { InventoryItem, UserProfile, ActivityLog, Category, Location } from '@/lib/supabase'
+import { getFullPath, getRouterPath } from '@/lib/config'
 import type { User } from '@supabase/supabase-js'
+import ActivityLogModal from '@/components/ActivityLogModal'
 
 export default function FinalTeamDashboard() {
   const router = useRouter()
   const [items, setItems] = useState<InventoryItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingStage, setLoadingStage] = useState('Initializing...')
   const [user, setUser] = useState<User | null>(null)
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
+  const [locations, setLocations] = useState<Location[]>([])
   const [showAddForm, setShowAddForm] = useState(false)
   const [newItem, setNewItem] = useState({
     name: '',
@@ -36,10 +41,7 @@ export default function FinalTeamDashboard() {
   const [showActivityModal, setShowActivityModal] = useState(false)
   const [showEditForm, setShowEditForm] = useState(false)
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null)
-
-  useEffect(() => {
-    fetchInitialData()
-  }, [])
+  const [dataLoaded, setDataLoaded] = useState(false)
 
   // Filter items based on current filters and search
   useEffect(() => {
@@ -67,8 +69,56 @@ export default function FinalTeamDashboard() {
     setFilteredItems(filtered)
   }, [items, filters, searchTerm])
 
-  const fetchInitialData = async () => {
+  const fetchCategories = async () => {
+    try {
+      // Try direct database query first (faster than Edge Functions)
+      const { data, error } = await supabase
+        .from('categories')
+        .select('*')
+        .order('name')
+
+      if (!error && data) {
+        setCategories(data)
+        return
+      }
+      
+      // Fallback to Edge Function if direct query fails
+      const { data: functionData, error: functionError } = await supabase.functions.invoke('manage-categories?action=list')
+      if (!functionError && functionData?.data) {
+        setCategories(functionData.data)
+      }
+    } catch (error) {
+      console.error('Failed to fetch categories:', error)
+    }
+  }
+
+  const fetchLocations = async () => {
+    try {
+      // Try direct database query first (faster than Edge Functions)
+      const { data, error } = await supabase
+        .from('locations')
+        .select('*')
+        .order('name')
+
+      if (!error && data) {
+        setLocations(data)
+        return
+      }
+      
+      // Fallback to Edge Function if direct query fails
+      const { data: functionData, error: functionError } = await supabase.functions.invoke('manage-locations?action=list')
+      if (!functionError && functionData?.data) {
+        setLocations(functionData.data)
+      }
+    } catch (error) {
+      console.error('Failed to fetch locations:', error)
+    }
+  }
+
+  const fetchInitialData = useCallback(async () => {
     setLoading(true)
+    setLoadingStage('Checking authentication...')
+    
     try {
       const { data: { user } } = await supabase.auth.getUser()
       setUser(user)
@@ -82,6 +132,8 @@ export default function FinalTeamDashboard() {
         return
       }
 
+      setLoadingStage('Loading user profile...')
+      
       // Fetch user profile to check role
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
@@ -94,26 +146,53 @@ export default function FinalTeamDashboard() {
       }
       setUserProfile(profile);
 
-      const { data: inventoryItems, error } = await supabase
-        .from('inventory_items')
-        .select('*')
-        .order('name', { ascending: true })
+      setLoadingStage('Loading inventory data...');
 
-      if (error) {
-        throw error
-      }
-      setItems(inventoryItems || [])
-      setFilteredItems(inventoryItems || [])
-
-      // Fetch activity logs
-      const { data: logs, error: logsError } = await supabase
+      // Fetch all data in parallel for maximum speed
+      const [inventoryResult, logsResult, categoriesResult, locationsResult] = await Promise.all([
+        supabase
+          .from('inventory_items')
+          .select('*')
+          .order('name', { ascending: true }),
+        supabase
         .from('activity_logs')
         .select('*')
         .order('timestamp', { ascending: false })
-        .limit(50)
+          .limit(50),
+        supabase
+          .from('categories')
+          .select('*')
+          .order('name'),
+        supabase
+          .from('locations')
+          .select('*')
+          .order('name')
+      ])
 
-      if (!logsError) {
-        setActivityLogs(logs || [])
+      // Process results
+      if (inventoryResult.error) {
+        throw inventoryResult.error
+      }
+      setItems(inventoryResult.data || [])
+      setFilteredItems(inventoryResult.data || [])
+
+      if (!logsResult.error) {
+        setActivityLogs(logsResult.data || [])
+      }
+
+      // Set categories and locations (with fallback if tables don't exist yet)
+      if (!categoriesResult.error && categoriesResult.data) {
+        setCategories(categoriesResult.data)
+      } else {
+        // Fallback to Edge Function if direct query fails
+        fetchCategories()
+      }
+
+      if (!locationsResult.error && locationsResult.data) {
+        setLocations(locationsResult.data)
+      } else {
+        // Fallback to Edge Function if direct query fails
+        fetchLocations()
       }
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred."
@@ -121,8 +200,15 @@ export default function FinalTeamDashboard() {
       console.error("Data fetch error:", error)
     } finally {
       setLoading(false)
+      setDataLoaded(true)
     }
+  }, [])
+
+  useEffect(() => {
+    if (!dataLoaded) {
+      fetchInitialData()
   }
+  }, [dataLoaded, fetchInitialData])
 
   const handleAddItem = async () => {
     // Check if user is logged in
@@ -176,6 +262,27 @@ export default function FinalTeamDashboard() {
       
       // Log the activity
       await logActivity(data.id, data.name, 'created', itemData)
+    }
+  }
+
+  const handleDeleteActivityLog = async (logId: string) => {
+    try {
+      const { error } = await supabase
+        .from('activity_logs')
+        .delete()
+        .eq('id', logId)
+
+      if (error) {
+        throw error
+      }
+
+      // Remove the log from the local state
+      setActivityLogs(activityLogs.filter(log => log.id !== logId))
+      toast.success('Activity log deleted successfully')
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to delete activity log"
+      toast.error(`Error: ${errorMessage}`)
+      console.error("Delete activity log error:", error)
     }
   }
 
@@ -241,6 +348,34 @@ export default function FinalTeamDashboard() {
       return;
     }
 
+    // Get the complete item information before deletion
+    const itemToDelete = items.find(item => item.id === itemId);
+    if (!itemToDelete) {
+      toast.error("Item not found");
+      return;
+    }
+
+    // Prepare complete item data for activity log
+    const deletedItemData = {
+      id: itemToDelete.id,
+      name: itemToDelete.name,
+      category: itemToDelete.category,
+      current_stock: itemToDelete.current_stock,
+      min_stock: itemToDelete.min_stock,
+      status: itemToDelete.status,
+      storage_location: itemToDelete.storage_location,
+      unit: itemToDelete.unit,
+      expire_date: itemToDelete.expire_date,
+      photo_url: itemToDelete.photo_url,
+      created_at: itemToDelete.created_at,
+      updated_at: itemToDelete.updated_at,
+      created_by: itemToDelete.created_by,
+      updated_by: itemToDelete.updated_by
+    };
+
+    // Log the activity BEFORE deleting the item to avoid foreign key constraint issues
+    await logActivity(itemId, itemName, 'deleted', deletedItemData);
+
     const { error } = await supabase
       .from('inventory_items')
       .delete()
@@ -251,10 +386,8 @@ export default function FinalTeamDashboard() {
     } else {
       const updatedItems = items.filter(i => i.id !== itemId);
       setItems(updatedItems);
+      setFilteredItems(updatedItems);
       toast.success(`"${itemName}" has been deleted.`);
-      
-      // Log the activity
-      await logActivity(itemId, itemName, 'deleted', { id: itemId, name: itemName });
     }
   };
 
@@ -271,7 +404,9 @@ export default function FinalTeamDashboard() {
     await supabase.auth.signOut()
     setUser(null)
     toast.success("Logged out.")
-    window.location.href = '/';
+    
+    // Handle both local development and GitHub Pages deployment
+    window.location.href = getFullPath('/');
   }
 
   const logActivity = async (itemId: string, itemName: string, action: string, changes: Record<string, unknown>) => {
@@ -366,8 +501,12 @@ export default function FinalTeamDashboard() {
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center">
-        <p className="text-lg">Loading Team Dashboard...</p>
+      <div className="flex h-screen items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mb-4"></div>
+          <p className="text-lg text-gray-700">{loadingStage}</p>
+          <p className="text-sm text-gray-500 mt-2">This usually takes just a few seconds...</p>
+        </div>
       </div>
     )
   }
@@ -377,96 +516,121 @@ export default function FinalTeamDashboard() {
       <Toaster position="top-right" />
       <div className="min-h-screen bg-gray-50">
         <header className="bg-white shadow-sm border-b">
-          <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+          <div className="mx-auto max-w-7xl px-3 py-4 sm:px-6 lg:px-8 sm:py-6">
+            {/* Mobile-optimized header layout */}
             <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <div className="flex items-center justify-center w-10 h-10 bg-indigo-600 rounded-lg">
-                  <span className="text-white font-bold text-lg">G</span>
+              {/* Logo and title */}
+              <div className="flex items-center space-x-2 sm:space-x-3 min-w-0 flex-1">
+                <div className="flex items-center justify-center w-8 h-8 sm:w-10 sm:h-10 bg-indigo-600 rounded-lg flex-shrink-0">
+                  <span className="text-white font-bold text-sm sm:text-lg">G</span>
                 </div>
-                <div>
-                  <h1 className="text-2xl font-bold text-gray-900">GMML Inventory System</h1>
+                <div className="min-w-0">
+                  <h1 className="text-lg sm:text-2xl font-bold text-gray-900 truncate">
+                    <span className="sm:hidden">GMML Inventory</span>
+                    <span className="hidden sm:inline">GMML Inventory System</span>
+                  </h1>
                 </div>
               </div>
-              <div className="flex items-center gap-4">
+              
+              {/* User actions */}
+              <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
+                {/* Admin Panel - hidden on very small screens */}
                 {userProfile?.role === 'admin' && (
                   <button 
-                    onClick={() => router.push('/admin')} 
-                    className="text-sm font-semibold text-indigo-600 hover:text-indigo-800"
+                    onClick={() => router.push(getRouterPath('/admin'))} 
+                    className="hidden xs:inline-flex text-xs sm:text-sm font-semibold text-indigo-600 hover:text-indigo-800 px-2 py-1 rounded-md hover:bg-indigo-50"
                   >
-                    Admin Panel
+                    <span className="sm:hidden">Admin</span>
+                    <span className="hidden sm:inline">Admin Panel</span>
                   </button>
                 )}
-                <span className="text-sm text-gray-600">{user?.email || "Team Mode"}</span>
+                
+                {/* User email - responsive display */}
+                <span className="hidden sm:inline text-sm text-gray-600 max-w-32 lg:max-w-none truncate">
+                  {user?.email || "Team Mode"}
+                </span>
+                
+                {/* Login/Logout button */}
                 {user && user.id ? (
-                  <button onClick={handleLogout} className="text-sm font-semibold text-red-600 hover:text-red-800">Logout</button>
+                  <button 
+                    onClick={handleLogout} 
+                    className="text-xs sm:text-sm font-semibold text-red-600 hover:text-red-800 px-2 py-1 rounded-md hover:bg-red-50"
+                  >
+                    Logout
+                  </button>
                 ) : (
-                  <button onClick={handleLogin} className="text-sm font-semibold text-indigo-600 hover:text-indigo-800">Login with Google</button>
+                  <button 
+                    onClick={handleLogin} 
+                    className="text-xs sm:text-sm font-semibold text-indigo-600 hover:text-indigo-800 px-2 py-1 rounded-md hover:bg-indigo-50"
+                  >
+                    <span className="sm:hidden">Login</span>
+                    <span className="hidden sm:inline">Login with Google</span>
+                  </button>
                 )}
               </div>
+            </div>
+            
+            {/* Mobile user info row */}
+            <div className="sm:hidden mt-2 flex items-center justify-between text-xs text-gray-600">
+              <span className="truncate flex-1">{user?.email || "Team Mode"}</span>
+              {userProfile?.role === 'admin' && (
+                <button 
+                  onClick={() => router.push(getRouterPath('/admin'))} 
+                  className="ml-2 text-indigo-600 hover:text-indigo-800 font-medium"
+                >
+                  Admin Panel
+                </button>
+              )}
             </div>
           </div>
         </header>
 
-        <main className="mx-auto max-w-7xl py-6 sm:px-6 lg:px-8">
-          {/* Stats */}
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-4 mb-8">
-            <div className="overflow-hidden rounded-lg bg-white px-6 py-5 shadow-sm border border-gray-200">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
-                    <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <main className="mx-auto max-w-7xl py-6 px-4 sm:px-6 lg:px-8">
+          {/* Stats - Single Card */}
+          <div className="bg-white p-4 sm:p-6 rounded-lg shadow-sm border border-gray-200 mb-8">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
+              <div className="flex items-center gap-2 lg:gap-3">
+                <div className="w-8 h-8 lg:w-10 lg:h-10 bg-blue-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <svg className="w-4 h-4 lg:w-5 lg:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
                     </svg>
                   </div>
+                <div className="min-w-0">
+                  <p className="text-xs lg:text-sm font-medium text-gray-600 truncate">Total Items</p>
+                  <p className="text-lg lg:text-2xl font-bold text-blue-700">{totalItems}</p>
                 </div>
-                <div className="ml-4">
-                  <dt className="text-sm font-medium text-gray-900">Total Items</dt>
-                  <dd className="text-2xl font-semibold text-gray-900">{totalItems}</dd>
                 </div>
-              </div>
-            </div>
-            <div className="overflow-hidden rounded-lg bg-white px-6 py-5 shadow-sm border border-gray-200">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
-                    <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="flex items-center gap-2 lg:gap-3">
+                <div className="w-8 h-8 lg:w-10 lg:h-10 bg-green-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <svg className="w-4 h-4 lg:w-5 lg:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                     </svg>
                   </div>
+                <div className="min-w-0">
+                  <p className="text-xs lg:text-sm font-medium text-gray-600 truncate">In Stock</p>
+                  <p className="text-lg lg:text-2xl font-bold text-green-700">{inStockCount}</p>
                 </div>
-                <div className="ml-4">
-                  <dt className="text-sm font-medium text-gray-900">In Stock</dt>
-                  <dd className="text-2xl font-semibold text-green-600">{inStockCount}</dd>
                 </div>
-              </div>
-            </div>
-            <div className="overflow-hidden rounded-lg bg-white px-6 py-5 shadow-sm border border-gray-200">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <div className="w-8 h-8 bg-yellow-100 rounded-lg flex items-center justify-center">
-                    <svg className="w-5 h-5 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="flex items-center gap-2 lg:gap-3">
+                <div className="w-8 h-8 lg:w-10 lg:h-10 bg-yellow-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <svg className="w-4 h-4 lg:w-5 lg:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.5 0L4.268 18.5c-.77.833.192 2.5 1.732 2.5z" />
                     </svg>
                   </div>
+                <div className="min-w-0">
+                  <p className="text-xs lg:text-sm font-medium text-gray-600 truncate">Low Stock</p>
+                  <p className="text-lg lg:text-2xl font-bold text-yellow-700">{lowStockCount}</p>
                 </div>
-                <div className="ml-4">
-                  <dt className="text-sm font-medium text-gray-900">Low Stock</dt>
-                  <dd className="text-2xl font-semibold text-yellow-600">{lowStockCount}</dd>
                 </div>
-              </div>
-            </div>
-            <div className="overflow-hidden rounded-lg bg-white px-6 py-5 shadow-sm border border-gray-200">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center">
-                    <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="flex items-center gap-2 lg:gap-3">
+                <div className="w-8 h-8 lg:w-10 lg:h-10 bg-red-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <svg className="w-4 h-4 lg:w-5 lg:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   </div>
-                </div>
-                <div className="ml-4">
-                  <dt className="text-sm font-medium text-gray-900">Out of Stock</dt>
-                  <dd className="text-2xl font-semibold text-red-600">{outOfStockCount}</dd>
+                <div className="min-w-0">
+                  <p className="text-xs lg:text-sm font-medium text-gray-600 truncate">Out of Stock</p>
+                  <p className="text-lg lg:text-2xl font-bold text-red-700">{outOfStockCount}</p>
                 </div>
               </div>
             </div>
@@ -508,48 +672,74 @@ export default function FinalTeamDashboard() {
                   <label htmlFor="filter-category" className="block text-sm font-medium text-gray-700 mb-1">
                     Category
                   </label>
+                  <div className="relative">
                   <select
                     id="filter-category"
                     value={filters.category}
                     onChange={(e) => setFilters({...filters, category: e.target.value})}
-                    className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900"
+                      className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 appearance-none cursor-pointer"
                   >
                     <option value="">All Categories</option>
-                            <option value="Studying Consumables">Studying Consumables</option>
-                            <option value="Stationery">Stationery</option>
-                            <option value="Others">Others</option>
+                      {categories.map((category) => (
+                        <option key={category.id} value={category.name}>
+                          {category.name}
+                        </option>
+                      ))}
                   </select>
+                    <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                      <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                  </div>
                 </div>
                 <div>
                   <label htmlFor="filter-location" className="block text-sm font-medium text-gray-700 mb-1">
                     Location
                   </label>
+                  <div className="relative">
                   <select
                     id="filter-location"
                     value={filters.location}
                     onChange={(e) => setFilters({...filters, location: e.target.value})}
-                    className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900"
+                      className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 appearance-none cursor-pointer"
                   >
                     <option value="">All Locations</option>
-                    <option value="GTR">GTR</option>
-                    <option value="MD6 LEVEL9">MD6 LEVEL9</option>
+                      {locations.map((location) => (
+                        <option key={location.id} value={location.name}>
+                          {location.name}
+                        </option>
+                      ))}
                   </select>
+                    <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                      <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                  </div>
                 </div>
                 <div>
                   <label htmlFor="filter-status" className="block text-sm font-medium text-gray-700 mb-1">
                     Status
                   </label>
+                  <div className="relative">
                   <select
                     id="filter-status"
                     value={filters.status}
                     onChange={(e) => setFilters({...filters, status: e.target.value})}
-                    className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900"
+                      className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 appearance-none cursor-pointer"
                   >
                     <option value="">All Status</option>
                     <option value="In Stock">In Stock</option>
                     <option value="Low Stock">Low Stock</option>
                     <option value="Out of Stock">Out of Stock</option>
                   </select>
+                    <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                      <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -557,35 +747,22 @@ export default function FinalTeamDashboard() {
 
           {/* Table */}
           <div className="bg-white shadow-sm rounded-lg border border-gray-200">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold text-gray-900">Inventory Items</h2>
-                  <p className="text-sm text-gray-600">Showing {filteredItems.length} of {items.length} items</p>
+            <div className="px-3 py-4 sm:px-6 border-b border-gray-200">
+              {/* Mobile-optimized header */}
+              <div className="flex flex-col space-y-3 sm:flex-row sm:items-center sm:justify-between sm:space-y-0">
+                {/* Title and count */}
+                <div className="min-w-0">
+                  <h2 className="text-base sm:text-lg font-semibold text-gray-900">Inventory Items</h2>
+                  <p className="text-xs sm:text-sm text-gray-600">Showing {filteredItems.length} of {items.length} items</p>
                 </div>
-                <div className="flex items-center space-x-3">
-                  <button
-                    onClick={() => setShowActivityModal(true)}
-                    className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                  >
-                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                    Activity Log
-                  </button>
-                  <button
-                    onClick={handleExportCSV}
-                    className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                  >
-                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    Export CSV
-                  </button>
+                
+                {/* Action buttons */}
+                <div className="flex flex-col space-y-2 sm:flex-row sm:items-center sm:space-y-0 sm:space-x-3">
+                  {/* Primary action - Add Item */}
                   <button
                     onClick={() => setShowAddForm(!showAddForm)}
                     disabled={!user || !user.id}
-                    className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 ${
+                    className={`inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 w-full sm:w-auto ${
                       !user || !user.id || userProfile?.role === 'user'
                         ? 'bg-gray-400 cursor-not-allowed' 
                         : 'bg-indigo-600 hover:bg-indigo-700'
@@ -594,8 +771,31 @@ export default function FinalTeamDashboard() {
                     <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                     </svg>
-                    {!user || !user.id ? 'Login to Add Items' : 'Add Item'}
+                    <span className="sm:hidden">{!user || !user.id ? 'Login to Add' : 'Add Item'}</span>
+                    <span className="hidden sm:inline">{!user || !user.id ? 'Login to Add Items' : 'Add Item'}</span>
                   </button>
+                  
+                  {/* Secondary actions */}
+                  <div className="flex space-x-2 sm:space-x-3">
+                  <button
+                      onClick={() => setShowActivityModal(true)}
+                      className="inline-flex items-center justify-center px-3 py-2 border border-gray-300 shadow-sm text-xs sm:text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 flex-1 sm:flex-none"
+                  >
+                      <svg className="w-4 h-4 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                    </svg>
+                      <span className="hidden sm:inline">Activity Log</span>
+                  </button>
+                  <button
+                      onClick={handleExportCSV}
+                      className="inline-flex items-center justify-center px-3 py-2 border border-gray-300 shadow-sm text-xs sm:text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 flex-1 sm:flex-none"
+                    >
+                      <svg className="w-4 h-4 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                      <span className="hidden sm:inline">Export CSV</span>
+                  </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -623,61 +823,128 @@ export default function FinalTeamDashboard() {
                     <label htmlFor="item-category" className="block text-sm font-medium text-gray-700">
                       Category *
                     </label>
+                    <div className="relative mt-1">
                     <select
                       id="item-category"
                       value={newItem.category}
                       onChange={(e) => setNewItem({...newItem, category: e.target.value})}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
+                        className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 appearance-none cursor-pointer"
                     >
                       <option value="">Select category</option>
-                            <option value="Studying Consumables">Studying Consumables</option>
-                            <option value="Stationery">Stationery</option>
-                            <option value="Others">Others</option>
+                        {categories.map((category) => (
+                          <option key={category.id} value={category.name}>
+                            {category.name}
+                          </option>
+                        ))}
                     </select>
+                      <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
+                    </div>
                   </div>
                   
                   <div>
                     <label htmlFor="storage-location" className="block text-sm font-medium text-gray-700">
                       Storage Location *
                     </label>
-                    <select
-                      id="storage-location"
-                      value={newItem.storage_location}
-                      onChange={(e) => setNewItem({...newItem, storage_location: e.target.value})}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
-                    >
-                      <option value="">Select location</option>
-                      <option value="GTR">GTR</option>
-                      <option value="MD6 LEVEL9">MD6 LEVEL9</option>
-                    </select>
+                    <div className="relative mt-1">
+                      <select
+                        id="storage-location"
+                        value={newItem.storage_location}
+                        onChange={(e) => setNewItem({...newItem, storage_location: e.target.value})}
+                        className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 appearance-none cursor-pointer"
+                      >
+                        <option value="">Select location</option>
+                        {locations.map((location) => (
+                          <option key={location.id} value={location.name}>
+                            {location.name}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
+                    </div>
                   </div>
 
                   <div>
                     <label htmlFor="current-stock" className="block text-sm font-medium text-gray-700">
                       Current Stock
                     </label>
+                    <div className="mt-1 flex items-center">
+                      <button
+                        type="button"
+                        onClick={() => setNewItem({...newItem, current_stock: Math.max(0, newItem.current_stock - 1)})}
+                        className="flex items-center justify-center w-10 h-10 border border-gray-300 rounded-l-md bg-gray-50 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      >
+                        <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                        </svg>
+                      </button>
                     <input
-                      type="number"
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
                       id="current-stock"
                       value={newItem.current_stock}
-                      onChange={(e) => setNewItem({...newItem, current_stock: parseInt(e.target.value) || 0})}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
-                      min="0"
-                    />
+                        onChange={(e) => {
+                          const value = e.target.value.replace(/\D/g, '');
+                          setNewItem({...newItem, current_stock: parseInt(value) || 0});
+                        }}
+                        className="block w-full border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setNewItem({...newItem, current_stock: newItem.current_stock + 1})}
+                        className="flex items-center justify-center w-10 h-10 border border-gray-300 rounded-r-md bg-gray-50 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      >
+                        <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
 
                   <div>
                     <label htmlFor="min-stock" className="block text-sm font-medium text-gray-700">
                       Min Stock
                     </label>
+                    <div className="mt-1 flex items-center">
+                      <button
+                        type="button"
+                        onClick={() => setNewItem({...newItem, min_stock: Math.max(0, newItem.min_stock - 1)})}
+                        className="flex items-center justify-center w-10 h-10 border border-gray-300 rounded-l-md bg-gray-50 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      >
+                        <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                        </svg>
+                      </button>
                     <input
-                      type="number"
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
                       id="min-stock"
                       value={newItem.min_stock}
-                      onChange={(e) => setNewItem({...newItem, min_stock: parseInt(e.target.value) || 0})}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
-                      min="0"
-                    />
+                        onChange={(e) => {
+                          const value = e.target.value.replace(/\D/g, '');
+                          setNewItem({...newItem, min_stock: parseInt(value) || 0});
+                        }}
+                        className="block w-full border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setNewItem({...newItem, min_stock: newItem.min_stock + 1})}
+                        className="flex items-center justify-center w-10 h-10 border border-gray-300 rounded-r-md bg-gray-50 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      >
+                        <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
 
                   <div>
@@ -787,7 +1054,7 @@ export default function FinalTeamDashboard() {
           </div>
 
           {/* Edit Item Modal */}
-          {showEditForm && editingItem && (
+            {showEditForm && editingItem && (
             <div className="fixed inset-0 bg-gray-600 bg-opacity-50 z-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-3xl">
                 <h3 className="text-2xl font-semibold text-gray-900 mb-6">Edit Item</h3>
@@ -810,61 +1077,128 @@ export default function FinalTeamDashboard() {
                     <label htmlFor="edit-item-category" className="block text-sm font-medium text-gray-700">
                       Category *
                     </label>
+                    <div className="relative mt-1">
                     <select
                       id="edit-item-category"
                       value={editingItem.category}
                       onChange={(e) => setEditingItem({...editingItem, category: e.target.value})}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
+                        className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 appearance-none cursor-pointer"
                     >
                       <option value="">Select category</option>
-                            <option value="Studying Consumables">Studying Consumables</option>
-                            <option value="Stationery">Stationery</option>
-                            <option value="Others">Others</option>
+                        {categories.map((category) => (
+                          <option key={category.id} value={category.name}>
+                            {category.name}
+                          </option>
+                        ))}
                     </select>
+                      <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
+                    </div>
                   </div>
 
                   <div>
                     <label htmlFor="edit-storage-location" className="block text-sm font-medium text-gray-700">
                       Storage Location *
                     </label>
-                    <select
-                      id="edit-storage-location"
-                      value={editingItem.storage_location}
-                      onChange={(e) => setEditingItem({...editingItem, storage_location: e.target.value})}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
-                    >
-                      <option value="">Select location</option>
-                      <option value="GTR">GTR</option>
-                      <option value="MD6 LEVEL9">MD6 LEVEL9</option>
-                    </select>
+                    <div className="relative mt-1">
+                      <select
+                        id="edit-storage-location"
+                        value={editingItem.storage_location}
+                        onChange={(e) => setEditingItem({...editingItem, storage_location: e.target.value})}
+                        className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 appearance-none cursor-pointer"
+                      >
+                        <option value="">Select location</option>
+                        {locations.map((location) => (
+                          <option key={location.id} value={location.name}>
+                            {location.name}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
+                    </div>
                   </div>
 
                   <div>
                     <label htmlFor="edit-current-stock" className="block text-sm font-medium text-gray-700">
                       Current Stock
                     </label>
+                    <div className="mt-1 flex items-center">
+                      <button
+                        type="button"
+                        onClick={() => setEditingItem({...editingItem, current_stock: Math.max(0, editingItem.current_stock - 1)})}
+                        className="flex items-center justify-center w-10 h-10 border border-gray-300 rounded-l-md bg-gray-50 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      >
+                        <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                        </svg>
+                      </button>
                     <input
-                      type="number"
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
                       id="edit-current-stock"
                       value={editingItem.current_stock}
-                      onChange={(e) => setEditingItem({...editingItem, current_stock: parseInt(e.target.value) || 0})}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
-                      min="0"
-                    />
+                        onChange={(e) => {
+                          const value = e.target.value.replace(/\D/g, '');
+                          setEditingItem({...editingItem, current_stock: parseInt(value) || 0});
+                        }}
+                        className="block w-full border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setEditingItem({...editingItem, current_stock: editingItem.current_stock + 1})}
+                        className="flex items-center justify-center w-10 h-10 border border-gray-300 rounded-r-md bg-gray-50 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      >
+                        <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
 
                   <div>
                     <label htmlFor="edit-min-stock" className="block text-sm font-medium text-gray-700">
                       Min Stock
                     </label>
+                    <div className="mt-1 flex items-center">
+                      <button
+                        type="button"
+                        onClick={() => setEditingItem({...editingItem, min_stock: Math.max(0, editingItem.min_stock - 1)})}
+                        className="flex items-center justify-center w-10 h-10 border border-gray-300 rounded-l-md bg-gray-50 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      >
+                        <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                        </svg>
+                      </button>
                     <input
-                      type="number"
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
                       id="edit-min-stock"
                       value={editingItem.min_stock}
-                      onChange={(e) => setEditingItem({...editingItem, min_stock: parseInt(e.target.value) || 0})}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900"
-                      min="0"
-                    />
+                        onChange={(e) => {
+                          const value = e.target.value.replace(/\D/g, '');
+                          setEditingItem({...editingItem, min_stock: parseInt(value) || 0});
+                        }}
+                        className="block w-full border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm text-gray-900 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setEditingItem({...editingItem, min_stock: editingItem.min_stock + 1})}
+                        className="flex items-center justify-center w-10 h-10 border border-gray-300 rounded-r-md bg-gray-50 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      >
+                        <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
 
                   <div>
@@ -916,73 +1250,17 @@ export default function FinalTeamDashboard() {
                 </div>
               </div>
 
-            </div>
+                            </div>
           )}
 
           {/* Activity Log Modal */}
           {showActivityModal && (
-            <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-              <div className="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-medium text-gray-900">Activity Log</h3>
-                  <button
-                    onClick={() => setShowActivityModal(false)}
-                    className="text-gray-400 hover:text-gray-600"
-                  >
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-                <div className="max-h-96 overflow-y-auto">
-                  {activityLogs.length === 0 ? (
-                    <p className="text-gray-900 text-center py-4">No activity logs yet</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {activityLogs.map((log, index) => (
-                        <div key={index} className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg">
-                          <div className="flex-shrink-0">
-                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                              log.action === 'created' ? 'bg-green-100 text-green-800' :
-                              log.action === 'updated' ? 'bg-blue-100 text-blue-800' :
-                              'bg-red-100 text-red-800'
-                            }`}>
-                              {log.action}
-                            </span>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-gray-900">
-                              {log.user_email} {log.action} &quot;{log.item_name}&quot;
-                            </p>
-                            <p className="text-xs text-gray-900">
-                              {new Date(log.timestamp).toLocaleString()}
-                            </p>
-                            {log.changes && (
-                              <div className="mt-1 text-xs text-gray-900">
-                                <details>
-                                  <summary className="cursor-pointer hover:text-gray-800">View changes</summary>
-                                  <pre className="mt-1 p-2 bg-white rounded border text-xs overflow-x-auto">
-                                    {JSON.stringify(log.changes, null, 2)}
-                                  </pre>
-                                </details>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="mt-4 flex justify-end">
-                  <button
-                    onClick={() => setShowActivityModal(false)}
-                    className="px-4 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400"
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
-            </div>
+            <ActivityLogModal
+              logs={activityLogs}
+              userProfile={userProfile}
+              onClose={() => setShowActivityModal(false)}
+              onDeleteLog={handleDeleteActivityLog}
+            />
           )}
         </main>
       </div>

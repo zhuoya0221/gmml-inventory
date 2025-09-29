@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase, type InventoryItem, type ActivityLog } from '@/lib/supabase'
+import { getRouterPath } from '@/lib/config'
 import { toast } from 'react-hot-toast'
 import { 
   Package, 
@@ -49,7 +50,7 @@ export default function InventoryDashboard() {
       
       if (!user) {
         console.log('❌ No user found, redirecting to login...')
-        router.push('/login')
+        router.push(getRouterPath('/team-dashboard'))
         return
       }
       
@@ -57,7 +58,7 @@ export default function InventoryDashboard() {
       setUser(user)
     } catch (error) {
       console.error('💥 Error checking user:', error)
-      router.push('/login')
+      router.push('/team-dashboard')
     } finally {
       setLoading(false)
     }
@@ -144,7 +145,7 @@ export default function InventoryDashboard() {
     if (error) {
       toast.error('Error signing out')
     } else {
-      router.push('/login')
+      router.push('/team-dashboard')
     }
   }
 
@@ -214,74 +215,88 @@ export default function InventoryDashboard() {
     <div className="min-h-screen bg-gray-50">
       <Header user={user} onSignOut={handleSignOut} />
       
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-8">
-          <div className="flex items-center justify-between">
+      <main className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8">
+        <div className="mb-6">
+          {/* Mobile-optimized header */}
+          <div className="flex flex-col space-y-4 sm:flex-row sm:items-center sm:justify-between sm:space-y-0">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
-                <Package className="h-8 w-8 text-indigo-600" />
+              <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 flex items-center gap-2">
+                <Package className="h-6 w-6 sm:h-8 sm:w-8 text-indigo-600" />
                 GMML Inventory
               </h1>
-              <p className="text-gray-600 mt-1">Manage your team&apos;s inventory and track changes</p>
+              <p className="text-gray-600 mt-1 text-sm sm:text-base">Manage your team&apos;s inventory</p>
             </div>
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => setShowActivityModal(true)}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-              >
-                <History className="h-4 w-4" />
-                Activity Log
-              </button>
-              <button
-                onClick={exportToCSV}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-              >
-                <Download className="h-4 w-4" />
-                Export CSV
-              </button>
+            
+            {/* Mobile-friendly action buttons */}
+            <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
+              {/* Primary action - always visible */}
               <button
                 onClick={() => setShowAddModal(true)}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 border border-transparent rounded-md hover:bg-indigo-700"
+                className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 border border-transparent rounded-md hover:bg-indigo-700 w-full sm:w-auto"
               >
                 <Plus className="h-4 w-4" />
                 Add Item
               </button>
+              
+              {/* Secondary actions - responsive layout */}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowActivityModal(true)}
+                  className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 flex-1 sm:flex-none"
+                >
+                  <History className="h-4 w-4" />
+                  <span className="hidden sm:inline">Activity Log</span>
+                  <span className="sm:hidden">Activity</span>
+                </button>
+                <button
+                  onClick={exportToCSV}
+                  className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 flex-1 sm:flex-none"
+                >
+                  <Download className="h-4 w-4" />
+                  <span className="hidden sm:inline">Export CSV</span>
+                  <span className="sm:hidden">Export</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
 
         <StatsCards items={items} />
 
-        {/* Filters */}
-        <div className="bg-white p-6 rounded-lg shadow mb-6">
+        {/* Filters - Mobile Optimized */}
+        <div className="bg-white p-4 sm:p-6 rounded-lg shadow mb-6">
           <h2 className="text-lg font-medium text-gray-900 mb-4 flex items-center gap-2">
             <Filter className="h-5 w-5" />
             Filters & Search
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Search by name
-              </label>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <input
-                  type="text"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                  placeholder="Search items..."
-                />
-              </div>
+          
+          {/* Search - Full width on mobile */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Search by name
+            </label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-3 py-3 text-base border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                placeholder="Search items..."
+              />
             </div>
+          </div>
+
+          {/* Filter dropdowns - Responsive grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
                 Category
               </label>
               <select
                 value={categoryFilter}
                 onChange={(e) => setCategoryFilter(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="w-full px-3 py-3 text-base border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white"
               >
                 <option value="">All Categories</option>
                 {categories.map(category => (
@@ -290,13 +305,13 @@ export default function InventoryDashboard() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
                 Location
               </label>
               <select
                 value={locationFilter}
                 onChange={(e) => setLocationFilter(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="w-full px-3 py-3 text-base border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white"
               >
                 <option value="">All Locations</option>
                 {locations.map(location => (
@@ -304,14 +319,14 @@ export default function InventoryDashboard() {
                 ))}
               </select>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+            <div className="sm:col-span-2 lg:col-span-1">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
                 Status
               </label>
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="w-full px-3 py-3 text-base border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white"
               >
                 <option value="">All Status</option>
                 <option value="In Stock">In Stock</option>
@@ -359,6 +374,7 @@ export default function InventoryDashboard() {
       {showActivityModal && (
         <ActivityLogModal
           logs={activityLogs}
+          userProfile={null}
           onClose={() => setShowActivityModal(false)}
         />
       )}
