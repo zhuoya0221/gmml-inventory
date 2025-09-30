@@ -1,6 +1,6 @@
 'use client'
 
-import { Package, TrendingUp, AlertTriangle, XCircle } from 'lucide-react'
+import { Package, TrendingUp, AlertTriangle, XCircle, Clock } from 'lucide-react'
 import { type InventoryItem } from '@/lib/supabase'
 
 interface StatsCardsProps {
@@ -12,6 +12,7 @@ export default function StatsCards({ items }: StatsCardsProps) {
   const inStockItems = items.filter(item => item.status === 'In Stock').length
   const lowStockItems = items.filter(item => item.status === 'Low Stock').length
   const outOfStockItems = items.filter(item => item.status === 'Out of Stock').length
+  const expiredItems = items.filter(item => item.status === 'Expired').length
 
   const stats = [
     {
@@ -45,13 +46,21 @@ export default function StatsCards({ items }: StatsCardsProps) {
       color: 'bg-red-500',
       bgColor: 'bg-red-50',
       textColor: 'text-red-700'
+    },
+    {
+      name: 'Expired',
+      value: expiredItems,
+      icon: Clock,
+      color: 'bg-purple-500',
+      bgColor: 'bg-purple-50',
+      textColor: 'text-purple-700'
     }
   ]
 
   return (
     <div className="bg-white p-4 sm:p-6 rounded-lg shadow mb-6">
       <h2 className="text-lg font-semibold text-gray-900 mb-4">Inventory Overview</h2>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
         {stats.map((stat) => {
           const Icon = stat.icon
           return (

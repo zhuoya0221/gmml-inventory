@@ -43,6 +43,30 @@ export default function FinalTeamDashboard() {
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null)
   const [dataLoaded, setDataLoaded] = useState(false)
 
+  // Helper function to calculate item status
+  const calculateItemStatus = (currentStock: number, minStock: number, expireDate?: string): 'In Stock' | 'Low Stock' | 'Out of Stock' | 'Expired' => {
+    // Check if item is expired first
+    if (expireDate) {
+      const expireDateObj = new Date(expireDate);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0); // Set to start of day for accurate comparison
+      expireDateObj.setHours(0, 0, 0, 0);
+      
+      if (expireDateObj < today) {
+        return 'Expired';
+      }
+    }
+    
+    // If not expired, check stock levels
+    if (currentStock <= 0) {
+      return 'Out of Stock';
+    } else if (currentStock <= minStock) {
+      return 'Low Stock';
+    } else {
+      return 'In Stock';
+    }
+  };
+
   // Filter items based on current filters and search
   useEffect(() => {
     let filtered = items
@@ -148,8 +172,8 @@ export default function FinalTeamDashboard() {
 
       setLoadingStage('Loading inventory data...');
 
-      // Fetch all data in parallel for maximum speed
-      const [inventoryResult, logsResult, categoriesResult, locationsResult] = await Promise.all([
+      // Fetch all data in parallel for maximum speed, including expiration check
+      const [inventoryResult, logsResult, categoriesResult, locationsResult, expirationCheck] = await Promise.all([
         supabase
           .from('inventory_items')
           .select('*')
@@ -166,7 +190,15 @@ export default function FinalTeamDashboard() {
         supabase
           .from('locations')
           .select('*')
-          .order('name')
+          .order('name'),
+        // Check and update expired items in parallel
+        supabase.rpc('check_expired_items').then(
+          result => result,
+          error => {
+            console.log('Note: check_expired_items function not available, will check client-side')
+            return null
+          }
+        )
       ])
 
       // Process results
@@ -178,6 +210,11 @@ export default function FinalTeamDashboard() {
 
       if (!logsResult.error) {
         setActivityLogs(logsResult.data || [])
+      }
+
+      // Check expiration update result
+      if (expirationCheck !== null) {
+        console.log('✅ Checked for expired items in parallel')
       }
 
       // Set categories and locations (with fallback if tables don't exist yet)
@@ -231,7 +268,7 @@ export default function FinalTeamDashboard() {
       storage_location: newItem.storage_location,
       unit: newItem.unit || null,
       expire_date: newItem.expire_date || null,
-      status: newItem.current_stock > newItem.min_stock ? 'In Stock' : (newItem.current_stock === 0 ? 'Out of Stock' : 'Low Stock'),
+      status: calculateItemStatus(newItem.current_stock, newItem.min_stock, newItem.expire_date),
       created_by: user.email,
       updated_by: user.email
     }
@@ -311,7 +348,7 @@ export default function FinalTeamDashboard() {
       storage_location: editingItem.storage_location,
       unit: editingItem.unit || null,
       expire_date: editingItem.expire_date || null,
-      status: editingItem.current_stock > editingItem.min_stock ? 'In Stock' : (editingItem.current_stock === 0 ? 'Out of Stock' : 'Low Stock'),
+      status: calculateItemStatus(editingItem.current_stock, editingItem.min_stock, editingItem.expire_date),
       updated_by: user.email,
       updated_at: new Date().toISOString()
     }
@@ -490,6 +527,7 @@ export default function FinalTeamDashboard() {
       case 'In Stock': return 'bg-green-100 text-green-800'
       case 'Low Stock': return 'bg-yellow-100 text-yellow-800'
       case 'Out of Stock': return 'bg-red-100 text-red-800'
+      case 'Expired': return 'bg-purple-100 text-purple-800'
       default: return 'bg-gray-100 text-gray-800'
     }
   }
@@ -507,6 +545,7 @@ export default function FinalTeamDashboard() {
   const inStockCount = baseFilteredItems.filter(i => i.status === 'In Stock').length;
   const lowStockCount = baseFilteredItems.filter(i => i.status === 'Low Stock').length;
   const outOfStockCount = baseFilteredItems.filter(i => i.status === 'Out of Stock').length;
+  const expiredCount = baseFilteredItems.filter(i => i.status === 'Expired').length;
 
   if (loading) {
     return (
@@ -596,7 +635,7 @@ export default function FinalTeamDashboard() {
         <main className="mx-auto max-w-7xl py-6 px-6 sm:px-6 lg:px-8">
           {/* Stats - Single Card */}
           <div className="bg-white p-4 sm:p-6 rounded-lg shadow-sm border border-gray-200 mb-8">
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 lg:gap-4">
               {/* Total Items - Clickable */}
               <button 
                 onClick={() => setFilters({...filters, status: ''})}
@@ -659,6 +698,22 @@ export default function FinalTeamDashboard() {
                   <p className="text-xs lg:text-sm font-medium text-gray-600 truncate">Out of Stock</p>
                   <p className="text-lg lg:text-2xl font-bold text-red-700">{outOfStockCount}</p>
                 </div>
+              </button>
+              
+              {/* Expired - Clickable */}
+              <button 
+                onClick={() => setFilters({...filters, status: 'Expired'})}
+                className={`flex items-center gap-2 lg:gap-3 p-2 rounded-lg transition-colors hover:bg-gray-50 ${filters.status === 'Expired' ? 'ring-2 ring-purple-500 bg-purple-50' : ''}`}
+              >
+                <div className="w-8 h-8 lg:w-10 lg:h-10 bg-purple-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <svg className="w-4 h-4 lg:w-5 lg:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs lg:text-sm font-medium text-gray-600 truncate">Expired</p>
+                  <p className="text-lg lg:text-2xl font-bold text-purple-700">{expiredCount}</p>
+              </div>
               </button>
             </div>
           </div>
@@ -760,6 +815,7 @@ export default function FinalTeamDashboard() {
                     <option value="In Stock">In Stock</option>
                     <option value="Low Stock">Low Stock</option>
                     <option value="Out of Stock">Out of Stock</option>
+                    <option value="Expired">Expired</option>
                   </select>
                     <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
                       <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

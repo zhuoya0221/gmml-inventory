@@ -24,7 +24,7 @@ export interface InventoryItem {
   min_stock: number
   unit: string
   expire_date?: string
-  status: 'In Stock' | 'Low Stock' | 'Out of Stock'
+  status: 'In Stock' | 'Low Stock' | 'Out of Stock' | 'Expired'
   date_updated: string
   storage_location: string
   created_at: string
